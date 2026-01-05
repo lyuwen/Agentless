@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Dict, Union
 
@@ -59,7 +60,12 @@ def request_chatgpt_engine(config, logger, base_url=None, max_retries=40, timeou
     ret = None
     retries = 0
 
-    client = openai.OpenAI(base_url=base_url)
+    base_url = os.getenv("OPENAI_BASE_URL") if base_url is None else base_url
+    api_key = os.getenv("OPENAI_API_KEY")
+    if os.getenv("ENABLE_THINKING"):
+        config["enable_thinking"] = True
+
+    client = openai.OpenAI(base_url=base_url, api_key=api_key)
 
     while ret is None and retries < max_retries:
         try:

@@ -11,14 +11,16 @@ from swebench.harness.constants import (
     TestStatus,
 )
 from swebench.harness.grading import get_eval_tests_report, get_logs_eval
+from swebench.harness.test_spec.test_spec import make_test_spec
 
 from agentless.test.run_tests import run_tests
 
 
-def rewrite_report(instance_id, input_folder_path, regression_tests):
-
+def rewrite_report(instance, input_folder_path, regression_tests):
+    instance_id = instance["instance_id"]
     log_path = f"{input_folder_path}/test/{instance_id}/test_output.txt"
-    eval_sm, found = get_logs_eval(log_path)
+    test_spec = make_test_spec(instance)
+    eval_sm, found = get_logs_eval(test_spec, log_path)
 
     eval_ref = {
         KEY_INSTANCE_ID: instance_id,
@@ -41,7 +43,8 @@ def save_passing_tests(output_jsonl_path, input_folder_path, dataset):
             log_path = f"{input_folder_path}/test/{instance_id}/test_output.txt"
             try:
                 # obtain the list of tests that were ran
-                eval_sm, found = get_logs_eval(log_path)
+                test_spec = make_test_spec(entry)
+                eval_sm, found = get_logs_eval(test_spec, log_path)
             except FileNotFoundError:
                 print(f"File not found: {log_path}")
                 continue
@@ -130,6 +133,10 @@ def _run_regression(args):
         if not args.load:
             run_regression_for_each_instance(args, data_lines, args.run_id)
 
+        # Load dataset to get instance details
+        ds = load_dataset(args.dataset)
+        instance_map = {x["instance_id"]: x for x in ds["test"]}
+
         regression_dict = {}
         instance_test_dict = {}
 
@@ -144,9 +151,9 @@ def _run_regression(args):
             instance_id = data["instance_id"]
             if os.path.isfile(
                 f"logs/run_evaluation/{args.run_id}/test/{instance_id}/report.json"
-            ):
+            ) and instance_id in instance_map:
                 regression_dict[instance_id] = rewrite_report(
-                    instance_id,
+                    instance_map[instance_id],
                     f"logs/run_evaluation/{args.run_id}",
                     instance_test_dict,
                 )
@@ -238,7 +245,7 @@ def main():
         "--dataset",
         type=str,
         default="princeton-nlp/SWE-bench_Lite",
-        choices=["princeton-nlp/SWE-bench_Lite", "princeton-nlp/SWE-bench_Verified"],
+        # choices=["princeton-nlp/SWE-bench_Lite", "princeton-nlp/SWE-bench_Verified"],
     )
 
     args = parser.parse_args()

@@ -12,18 +12,20 @@ from swebench.harness.constants import (
     FAIL_TO_PASS,
     KEY_INSTANCE_ID,
     MAP_REPO_VERSION_TO_SPECS,
+    MAP_REPO_TO_EXT,
     PASS_TO_PASS,
     USE_X86,
     SWEbenchInstance,
 )
 from swebench.harness.docker_build import build_env_images
 from swebench.harness.run_evaluation import get_dataset_from_preds, run_instance
-from swebench.harness.test_spec import (
+from swebench.harness.test_spec.test_spec import (
     TestSpec,
     make_env_script_list,
     make_repo_script_list,
 )
-from swebench.harness.utils import get_test_directives
+from swebench.harness.test_spec.python import get_test_directives
+# from swebench.harness.utils import get_test_directives
 from tqdm import tqdm
 
 OPEN_FILE_LIMIT = 4096
@@ -135,6 +137,9 @@ def make_reproduction_sec(instance: SWEbenchInstance) -> TestSpec:
     env_name = "testbed"
     repo_directory = f"/{env_name}"
     specs = MAP_REPO_VERSION_TO_SPECS[repo][version]
+    language = MAP_REPO_TO_EXT[repo]
+    docker_specs = specs.get("docker_specs", {})
+
 
     repo_script_list = make_repo_script_list(
         specs, repo, repo_directory, base_commit, env_name
@@ -159,6 +164,8 @@ def make_reproduction_sec(instance: SWEbenchInstance) -> TestSpec:
         arch=arch,
         FAIL_TO_PASS=fail_to_pass,
         PASS_TO_PASS=pass_to_pass,
+        language=language,
+        docker_specs=docker_specs,
     )
 
 
@@ -228,6 +235,8 @@ def make_regression_spec(instance: SWEbenchInstance) -> TestSpec:
     env_name = "testbed"
     repo_directory = f"/{env_name}"
     specs = MAP_REPO_VERSION_TO_SPECS[repo][version]
+    language = MAP_REPO_TO_EXT[repo]
+    docker_specs = specs.get("docker_specs", {})
 
     repo_script_list = make_repo_script_list(
         specs, repo, repo_directory, base_commit, env_name
@@ -252,6 +261,9 @@ def make_regression_spec(instance: SWEbenchInstance) -> TestSpec:
         arch=arch,
         FAIL_TO_PASS=fail_to_pass,  # Remove the fail to pass cases
         PASS_TO_PASS=pass_to_pass,
+        language=language,
+        docker_specs=docker_specs,
+        namespace=None,
     )
 
 
@@ -377,7 +389,7 @@ def run_reproduction_tests(
             }
 
     instances = get_dataset_from_preds(
-        dataset_name, split, instance_ids, predictions, run_id
+        dataset_name, split, instance_ids, predictions, run_id, True
     )
 
     if not instances:
@@ -411,6 +423,7 @@ def run_reproduction_tests(
         if tag in instance_image_ids
     }
     print(f"Found {len(existing_images)} existing instance images. Will reuse them.")
+    print(instance_image_ids)
 
     # Load in previously evaluated results
     resolved_dict = extract_resolved_info(
@@ -523,14 +536,28 @@ def run_tests(
         }
 
     instances = get_dataset_from_preds(
-        dataset_name, split, instance_ids, predictions, run_id
+        dataset_name, split, instance_ids, predictions, run_id, False
     )
+    # print(f"""
+    # instances = get_dataset_from_preds(
+    #     {dataset_name=}, {split=}, {instance_ids=}, predictions, {run_id=}, True
+    # )
+    # """)
 
     print(f"Running {len(instances)} unevaluated instances...")
     if not instances:
         print("No instances to run.")
     else:
-        build_env_images(client, instances, force_rebuild, max_workers)
+        print(f"build_env_images({client=}, instances, {force_rebuild=}, {max_workers=}")
+        build_env_images(
+            client,
+            instances,
+            force_rebuild,
+            max_workers,
+            namespace=None,
+            instance_image_tag="latest",
+            env_image_tag="latest",
+        )
 
     instance_test_dict = {}
 
@@ -614,8 +641,9 @@ def run_tests(
                 pbar.update(1)
                 result = future.result()
                 if result:
-                    instance_id = result[0]
-                    resolved = result[1][instance_id]["resolved"]
+                    # instance_id = result[0]
+                    # resolved = result[1][instance_id]["resolved"]
+                    resolved = result["resolved"]
                     resolved_dict[instance_id] = resolved
                 try:
                     # Update progress bar, check if instance ran successfully
