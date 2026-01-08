@@ -41,6 +41,18 @@ def _run_reproduction_tests(args):
             for instance_id in instance_ids
         ]
 
+        if args.num_shards > 1:
+            # sharding
+            print(f"Sharding: {args.shard_id}/{args.num_shards}")
+            total_instances = len(instance_ids)
+            instance_ids = [
+                x for i, x in enumerate(instance_ids) if i % args.num_shards == args.shard_id
+            ]
+            patches = [
+                x for i, x in enumerate(patches) if i % args.num_shards == args.shard_id
+            ]
+            print(f"Sharded instances: {len(instance_ids)} out of {total_instances}")
+
         evaluation_tests = load_jsonl(args.test_jsonl)
 
         results = run_reproduction_tests(
@@ -97,6 +109,16 @@ def _run_reproduction_tests(args):
 
         if args.load:
             reproduction_dict = {}
+            if args.num_shards > 1:
+                print(f"Sharding: {args.shard_id}/{args.num_shards}")
+                total_lines = len(data_lines)
+                data_lines = [
+                    x
+                    for i, x in enumerate(data_lines)
+                    if i % args.num_shards == args.shard_id
+                ]
+                print(f"Sharded data lines: {len(data_lines)} out of {total_lines}")
+
             for data in data_lines:
                 instance_id = data["instance_id"]
                 expected_output = "Issue resolved"
@@ -109,6 +131,16 @@ def _run_reproduction_tests(args):
                 else:
                     reproduction_dict[instance_id] = False
         else:
+            if args.num_shards > 1:
+                print(f"Sharding: {args.shard_id}/{args.num_shards}")
+                total_lines = len(data_lines)
+                data_lines = [
+                    x
+                    for i, x in enumerate(data_lines)
+                    if i % args.num_shards == args.shard_id
+                ]
+                print(f"Sharded data lines: {len(data_lines)} out of {total_lines}")
+
             reproduction_dict = run_reproduction_for_each_instance(
                 args, data_lines, args.run_id, args.test_jsonl
             )
@@ -159,6 +191,8 @@ def main():
     )
     parser.add_argument("--test_jsonl", type=str)
     parser.add_argument("--load", action="store_true")
+    parser.add_argument("--num_shards", type=int, default=1)
+    parser.add_argument("--shard_id", type=int, default=0)
 
     args = parser.parse_args()
 

@@ -166,6 +166,7 @@ def make_reproduction_sec(instance: SWEbenchInstance) -> TestSpec:
         PASS_TO_PASS=pass_to_pass,
         language=language,
         docker_specs=docker_specs,
+        namespace=None,
     )
 
 
@@ -364,7 +365,7 @@ def run_reproduction_tests(
     print(f"Using run_id: {run_id}")
 
     split = "test"
-    client = docker.from_env()
+    client = docker.from_env(timeout=600)
     force_rebuild = False
 
     predictions = {}
@@ -389,13 +390,22 @@ def run_reproduction_tests(
             }
 
     instances = get_dataset_from_preds(
-        dataset_name, split, instance_ids, predictions, run_id, True
+        dataset_name, split, instance_ids, predictions, run_id, False
     )
 
     if not instances:
         print("No instances to run.")
     else:
-        build_env_images(client, instances, force_rebuild, max_workers)
+        print("Build env images")
+        build_env_images(
+                client,
+                instances,
+                force_rebuild,
+                max_workers,
+                namespace=None,
+                instance_image_tag="latest",
+                env_image_tag="latest",
+                )
 
     no_f2p_instances = []
 
@@ -463,7 +473,7 @@ def run_reproduction_tests(
                     client,
                     run_id,
                     timeout,
-                ): None
+                ): test_spec.instance_id
                 for test_spec in test_specs
                 if test_spec.instance_id in ids
             }
@@ -472,8 +482,8 @@ def run_reproduction_tests(
                 pbar.update(1)
                 result = future.result()
                 if result:
-                    instance_id = result[0]
-                    resolved = result[1][instance_id]["resolved"]
+                    instance_id = futures[future]
+                    resolved = result["resolved"]
                     resolved_dict[instance_id] = resolved
                     # See if the tests ran successfully
                     if testing_patches:
@@ -519,7 +529,7 @@ def run_tests(
     print(f"Using run_id: {run_id}")
 
     split = "test"
-    client = docker.from_env()
+    client = docker.from_env(timeout=600)
     force_rebuild = False
 
     predictions = {}
@@ -632,7 +642,7 @@ def run_tests(
                     client,
                     run_id,
                     timeout,
-                ): None
+                ): test_spec.instance_id
                 for test_spec in test_specs
                 if test_spec.instance_id in ids
             }
@@ -643,6 +653,7 @@ def run_tests(
                 if result:
                     # instance_id = result[0]
                     # resolved = result[1][instance_id]["resolved"]
+                    instance_id = futures[future]
                     resolved = result["resolved"]
                     resolved_dict[instance_id] = resolved
                 try:
