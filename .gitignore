@@ -185,3 +185,7 @@ dev/
 
 # Jupyter Notebooks
 *.ipynb
+
+logs*
+playground/
+artifacts/
