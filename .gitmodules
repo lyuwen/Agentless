@@ -1,3 +1,3 @@
 [submodule "thirdparty/SWE-bench"]
 	path = thirdparty/SWE-bench
-	url = https://github.com/SWE-bench/SWE-bench.git
+	url = git@github.com:lyuwen/SWE-bench.git
