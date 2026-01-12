@@ -28,12 +28,16 @@ def create_chatgpt_config(
     batch_size: int = 1,
     system_message: str = "You are a helpful assistant.",
     model: str = "gpt-3.5-turbo",
+    top_p: float = 0.95,
+    thinking_budget: int = 32768,
+    enable_thinking: bool = False,
 ) -> Dict:
     if isinstance(message, list):
         config = {
             "model": model,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "top_p": top_p,
             "n": batch_size,
             "messages": [{"role": "system", "content": system_message}] + message,
         }
@@ -42,12 +46,17 @@ def create_chatgpt_config(
             "model": model,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "top_p": top_p,
             "n": batch_size,
             "messages": [
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": message},
             ],
         }
+    if thinking_budget:
+        config["thinking_budget"] = thinking_budget
+    if enable_thinking:
+        config["enable_thinking"] = True
     return config
 
 
@@ -113,12 +122,16 @@ def create_anthropic_config(
     system_message: str = "You are a helpful assistant.",
     model: str = "claude-2.1",
     tools: list = None,
+    top_p: float = 0.95,
+    thinking_budget: int = 32768,
+    enable_thinking: bool = False,
 ) -> Dict:
     if isinstance(message, list):
         config = {
             "model": model,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "top_p": top_p,
             "messages": message,
         }
     else:
@@ -126,6 +139,7 @@ def create_anthropic_config(
             "model": model,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "top_p": top_p,
             "messages": [
                 {"role": "user", "content": [{"type": "text", "text": message}]},
             ],
@@ -133,6 +147,11 @@ def create_anthropic_config(
 
     if tools:
         config["tools"] = tools
+    
+    if thinking_budget:
+        config["thinking_budget"] = thinking_budget
+    if enable_thinking:
+        config["enable_thinking"] = True
 
     return config
 

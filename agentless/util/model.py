@@ -18,6 +18,9 @@ class DecoderBase(ABC):
         batch_size: int = 1,
         temperature: float = 0.8,
         max_new_tokens: int = 1024,
+        top_p: float = 0.95,
+        thinking_budget: int = 32768,
+        enable_thinking: bool = False,
     ) -> None:
         logger.info("Initializing a decoder model: {} ...".format(name))
         self.name = name
@@ -25,6 +28,9 @@ class DecoderBase(ABC):
         self.batch_size = batch_size
         self.temperature = temperature
         self.max_new_tokens = max_new_tokens
+        self.top_p = top_p
+        self.thinking_budget = thinking_budget
+        self.enable_thinking = enable_thinking
 
     @abstractmethod
     def codegen(
@@ -60,6 +66,9 @@ class OpenAIChatDecoder(DecoderBase):
             temperature=self.temperature,
             batch_size=batch_size,
             model=self.name,
+            top_p=self.top_p,
+            thinking_budget=self.thinking_budget,
+            enable_thinking=self.enable_thinking,
         )
         ret = request_chatgpt_engine(config, self.logger)
         if ret:
@@ -232,6 +241,9 @@ Notes for using the `str_replace` command:
                     batch_size=1,
                     model=self.name,
                     tools=self.tools,
+                    top_p=self.top_p,
+                    thinking_budget=self.thinking_budget,
+                    enable_thinking=self.enable_thinking,
                 )
                 ret = request_anthropic_engine(
                     config,
@@ -297,6 +309,9 @@ Notes for using the `str_replace` command:
                 temperature=self.temperature,
                 batch_size=1,
                 model=self.name,
+                top_p=self.top_p,
+                thinking_budget=self.thinking_budget,
+                enable_thinking=self.enable_thinking,
             )
             ret = request_anthropic_engine(
                 config, self.logger, prompt_cache=prompt_cache
@@ -391,6 +406,9 @@ def make_model(
     batch_size: int = 1,
     max_tokens: int = 1024,
     temperature: float = 0.0,
+    top_p: float = 0.95,
+    thinking_budget: int = 32768,
+    enable_thinking: bool = False,
 ):
     if backend == "openai":
         return OpenAIChatDecoder(
@@ -399,6 +417,9 @@ def make_model(
             batch_size=batch_size,
             max_new_tokens=max_tokens,
             temperature=temperature,
+            top_p=top_p,
+            thinking_budget=thinking_budget,
+            enable_thinking=enable_thinking,
         )
     elif backend == "anthropic":
         return AnthropicChatDecoder(
@@ -407,6 +428,9 @@ def make_model(
             batch_size=batch_size,
             max_new_tokens=max_tokens,
             temperature=temperature,
+            top_p=top_p,
+            thinking_budget=thinking_budget,
+            enable_thinking=enable_thinking,
         )
     elif backend == "deepseek":
         return DeepSeekChatDecoder(
@@ -415,6 +439,9 @@ def make_model(
             batch_size=batch_size,
             max_new_tokens=max_tokens,
             temperature=temperature,
+            top_p=top_p,
+            thinking_budget=thinking_budget,
+            enable_thinking=enable_thinking,
         )
     else:
         raise NotImplementedError

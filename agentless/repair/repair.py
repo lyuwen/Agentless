@@ -242,6 +242,23 @@ def construct_topn_file_context(
     file_loc_intervals = dict()
     topn_content = ""
 
+    if not file_to_locs and pred_files:
+        for pred_file in pred_files:
+            if pred_file not in file_contents:
+                continue
+            content = file_contents[pred_file]
+            context_intervals = [(1, len(content.split("\n")))]
+            file_loc_content = line_wrap_content(
+                content,
+                context_intervals,
+                add_space=add_space,
+                no_line_number=no_line_number,
+                sticky_scroll=sticky_scroll,
+            )
+            topn_content += f"### {pred_file}\n{file_loc_content}\n\n\n"
+            file_loc_intervals[pred_file] = context_intervals
+        return topn_content, file_loc_intervals
+
     for pred_file, locs in file_to_locs.items():
         content = file_contents[pred_file]
         line_locs, context_intervals = transfer_arb_locs_to_locs(
@@ -269,7 +286,7 @@ def construct_topn_file_context(
     return topn_content, file_loc_intervals
 
 
-def process_loc(loc, args, swe_bench_data, prev_o, write_lock=None):
+def process_loc(loc, args, swe_bench_data, prev_o, batch_data=None, write_lock=None):
     instance_id = loc["instance_id"]
 
     if args.target_id is not None:
@@ -331,15 +348,20 @@ def process_loc(loc, args, swe_bench_data, prev_o, write_lock=None):
     topn_content = ""
     # Construct file contents
     file_contents = dict()
+    found_pred_files = []
     for i, pred_file in enumerate(pred_files):
         content = None
         for file_content in files:
             if file_content[0] == pred_file:
                 content = "\n".join(file_content[1])
                 file_contents[pred_file] = content
+                found_pred_files.append(pred_file)
                 break
 
-        assert content is not None, f"{pred_file} file not found"
+        if content is None:
+            logger.warning(f"{pred_file} file not found")
+
+    pred_files = found_pred_files
     # Construct top-n file context
     file_to_edit_locs = dict()
 
@@ -398,84 +420,162 @@ def process_loc(loc, args, swe_bench_data, prev_o, write_lock=None):
     ).strip()
     logger.info(f"prompting with message:\n{message}")
 
+    if args.batch_gen:
+        batch_requests = []
+        # greedy
+        if not args.skip_greedy:
+            batch_requests.append(
+                {
+                    "custom_id": f"{instance_id}|0",
+                    "method": "POST",
+                    "url": "/v1/chat/completions",
+                    "body": {
+                        "model": args.model,
+                        "messages": [{"role": "user", "content": message}],
+                        "max_tokens": args.max_tokens,
+                        "temperature": 0,
+                        "top_p": args.top_p,
+                        **({"thinking_budget": args.thinking_budget} if args.thinking_budget else {}),
+                        **({"enable_thinking": True} if args.enable_thinking else {}),
+                    },
+                }
+            )
+        # samples
+        for i in range(1, args.max_samples):
+            batch_requests.append(
+                {
+                    "custom_id": f"{instance_id}|{i}",
+                    "method": "POST",
+                    "url": "/v1/chat/completions",
+                    "body": {
+                        "model": args.model,
+                        "messages": [{"role": "user", "content": message}],
+                        "max_tokens": args.max_tokens,
+                        "temperature": args.temperature,
+                        "top_p": args.top_p,
+                        **({"thinking_budget": args.thinking_budget} if args.thinking_budget else {}),
+                        **({"enable_thinking": True} if args.enable_thinking else {}),
+                    },
+                }
+            )
+
+        if write_lock is not None:
+            write_lock.acquire()
+        with open(args.output_file, "a") as f:
+            for req in batch_requests:
+                f.write(json.dumps(req) + "\n")
+        if write_lock is not None:
+            write_lock.release()
+        return
+
     all_generations, counts, traj, prev_contents, file_names = [], [], [], [], []
     sample_responses = []
-    # get greedy sample
-    model = make_model(
-        model=args.model,
-        logger=logger,
-        backend=args.backend,
-        max_tokens=1024,
-        temperature=0,
-        batch_size=1,
-    )
-    if args.skip_greedy:
-        greedy_traj = {
-            "response": "",
-            "usage": {
-                "completion_tokens": 0,
-                "prompt_tokens": 0,
-            },
-        }
+
+    if args.process_batch:
+        if batch_data and instance_id in batch_data:
+            for i in range(args.max_samples):
+                if i in batch_data[instance_id]:
+                    # Assume batch_data[instance_id][i] is the response text
+                    response_text = batch_data[instance_id][i]
+                    sample_responses.append({
+                        "response": response_text,
+                        "usage": {"completion_tokens": 0, "prompt_tokens": 0},
+                    })
+                else:
+                    sample_responses.append({
+                        "response": "",
+                        "usage": {"completion_tokens": 0, "prompt_tokens": 0},
+                    })
+        else:
+            logger.warning(f"No batch data found for {instance_id}")
+            for i in range(args.max_samples):
+                sample_responses.append({
+                    "response": "",
+                    "usage": {"completion_tokens": 0, "prompt_tokens": 0},
+                })
     else:
-        if args.mock:
+        # get greedy sample
+        model = make_model(
+            model=args.model,
+            logger=logger,
+            backend=args.backend,
+            max_tokens=args.max_tokens,
+            temperature=0,
+            top_p=args.top_p,
+            thinking_budget=args.thinking_budget,
+            enable_thinking=args.enable_thinking,
+            batch_size=1,
+        )
+        if args.skip_greedy:
             greedy_traj = {
+                "response": "",
+                "usage": {
+                    "completion_tokens": 0,
+                    "prompt_tokens": 0,
+                },
+            }
+        else:
+            if args.mock:
+                greedy_traj = {
+                    "response": "",
+                    "usage": {
+                        "prompt_tokens": num_tokens_from_messages(message, args.model),
+                    },
+                }
+            else:
+                if args.str_replace_format:
+                    greedy_traj = model.codegen_w_tool(
+                        message, num_samples=1, prompt_cache=args.max_samples > 1
+                    )[0]
+                else:
+                    greedy_traj = model.codegen(
+                        message, num_samples=1, prompt_cache=args.max_samples > 1
+                    )[0]
+
+        sample_responses.append(greedy_traj)
+        # get temperature samples
+        model = make_model(
+            model=args.model,
+            logger=logger,
+            backend=args.backend,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            thinking_budget=args.thinking_budget,
+            enable_thinking=args.enable_thinking,
+            batch_size=args.max_samples - 1,  # minus the 1 greedy sample
+        )
+
+        if args.mock:
+            first_traj = {
                 "response": "",
                 "usage": {
                     "prompt_tokens": num_tokens_from_messages(message, args.model),
                 },
             }
-        else:
-            if args.str_replace_format:
-                greedy_traj = model.codegen_w_tool(
-                    message, num_samples=1, prompt_cache=args.max_samples > 1
-                )[0]
+            later_traj = {
+                "response": "",
+                "usage": {"prompt_tokens": 0},
+            }
+            if args.max_samples - 1:
+                sample_trajs = [first_traj] + [later_traj] * (args.max_samples - 2)
             else:
-                greedy_traj = model.codegen(
-                    message, num_samples=1, prompt_cache=args.max_samples > 1
-                )[0]
-
-    sample_responses.append(greedy_traj)
-    # get temperature samples
-    model = make_model(
-        model=args.model,
-        logger=logger,
-        backend=args.backend,
-        max_tokens=1024,
-        temperature=0.8,
-        batch_size=args.max_samples - 1,  # minus the 1 greedy sample
-    )
-
-    if args.mock:
-        first_traj = {
-            "response": "",
-            "usage": {
-                "prompt_tokens": num_tokens_from_messages(message, args.model),
-            },
-        }
-        later_traj = {
-            "response": "",
-            "usage": {"prompt_tokens": 0},
-        }
-        if args.max_samples - 1:
-            sample_trajs = [first_traj] + [later_traj] * (args.max_samples - 2)
+                sample_trajs = []
         else:
-            sample_trajs = []
-    else:
-        if args.max_samples - 1:
-            # always use cached prompt if possible for later samples
-            if args.str_replace_format:
-                sample_trajs = model.codegen_w_tool(
-                    message, num_samples=args.max_samples - 1, prompt_cache=True
-                )
+            if args.max_samples - 1:
+                # always use cached prompt if possible for later samples
+                if args.str_replace_format:
+                    sample_trajs = model.codegen_w_tool(
+                        message, num_samples=args.max_samples - 1, prompt_cache=True
+                    )
+                else:
+                    sample_trajs = model.codegen(
+                        message, num_samples=args.max_samples - 1, prompt_cache=True
+                    )
             else:
-                sample_trajs = model.codegen(
-                    message, num_samples=args.max_samples - 1, prompt_cache=True
-                )
-        else:
-            sample_trajs = []
+                sample_trajs = []
 
-    sample_responses.extend(sample_trajs)
+        sample_responses.extend(sample_trajs)
 
     count = 0
     while count < args.max_samples:
@@ -535,9 +635,35 @@ def repair(args):
     with open(f"{args.output_folder}/args.json", "w") as f:
         json.dump(vars(args), f, indent=4)
 
-    swe_bench_data = load_dataset(args.dataset, split="test")
+    if args.dataset.endswith(".jsonl") or args.dataset.endswith(".json"):
+        with open(args.dataset, "r") as f:
+            swe_bench_data = [json.loads(line) for line in f]
+    else:
+        swe_bench_data = load_dataset(args.dataset, split="test")
     locs = load_jsonl(args.loc_file)
     prev_o = load_jsonl(args.output_file) if os.path.exists(args.output_file) else []
+
+    batch_data = None
+    if args.process_batch:
+        assert args.batch_output, "Must provide --batch_output if --process_batch is set"
+        batch_data = {}
+        with open(args.batch_output, "r") as f:
+            for line in f:
+                res = json.loads(line)
+                custom_id = res["custom_id"]
+                # format: instance_id|sample_idx
+                instance_id, sample_idx = custom_id.rsplit("|", 1)
+                sample_idx = int(sample_idx)
+                if instance_id not in batch_data:
+                    batch_data[instance_id] = {}
+                
+                # Extract response text. openai batch format has 'response' key
+                # body is usually in res['response']['body']
+                try:
+                    content = res["response"]["body"]["choices"][0]["message"]["content"]
+                    batch_data[instance_id][sample_idx] = content
+                except (KeyError, IndexError):
+                    print(f"Warning: could not parse response for {custom_id}")
 
     with open(f"{args.output_folder}/used_locs.jsonl", "w") as f:
         for loc in locs:
@@ -545,7 +671,7 @@ def repair(args):
 
     if args.num_threads == 1:
         for loc in tqdm(locs, total=len(locs), colour="MAGENTA"):
-            process_loc(loc, args, swe_bench_data, prev_o)
+            process_loc(loc, args, swe_bench_data, prev_o, batch_data=batch_data)
     else:
         write_lock = Lock()
         with concurrent.futures.ThreadPoolExecutor(
@@ -553,7 +679,7 @@ def repair(args):
         ) as executor:
             futures = {
                 executor.submit(
-                    process_loc, loc, args, swe_bench_data, prev_o, write_lock
+                    process_loc, loc, args, swe_bench_data, prev_o, batch_data, write_lock
                 ): loc
                 for loc in locs
             }
@@ -729,10 +855,16 @@ def post_process_repair(args):
         cleanup_logger(logger)
 
 
+def int_or_none(value):
+    if value.lower() == "none":
+        return None
+    return int(value)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--loc_file", type=str, required=True)
-    parser.add_argument("--top_n", type=int, default=1)
+    parser.add_argument("--top_n", type=int_or_none, default=1)
     parser.add_argument("--loc_interval", action="store_true")
     parser.add_argument("--context_window", type=int, default=10)
     parser.add_argument("--gen_and_process", action="store_true")
@@ -769,6 +901,17 @@ def main():
     parser.add_argument("--str_replace_format", action="store_true")
     parser.add_argument("--skip_greedy", action="store_true")
     parser.add_argument("--sticky_scroll", action="store_true")
+    parser.add_argument("--batch_gen", action="store_true", help="Generate batch requests.")
+    parser.add_argument(
+        "--process_batch", action="store_true", help="Process from batch output."
+    )
+    parser.add_argument("--batch_output", type=str, help="Batch output file path.")
+    parser.add_argument("--sample_folder", action="store_true", help="Store samples in repair_sample_N folders.")
+    parser.add_argument("--temperature", type=float, default=0.8, help="Temperature for sampling.")
+    parser.add_argument("--top_p", type=float, default=0.95, help="Top p for sampling.")
+    parser.add_argument("--thinking_budget", type=int, default=32768, help="Thinking budget for requests.")
+    parser.add_argument("--enable_thinking", action="store_true", help="Enable thinking mode.")
+    parser.add_argument("--max_tokens", type=int, default=1024, help="Max tokens for requests.")
     parser.add_argument(
         "--num_threads",
         type=int,
@@ -807,26 +950,44 @@ def main():
     if not os.path.exists(os.path.join(args.output_folder, "repair_logs")):
         os.makedirs(os.path.join(args.output_folder, "repair_logs"))
 
-    args.output_file = os.path.join(args.output_folder, "output.jsonl")
+    if args.batch_gen:
+        args.output_file = os.path.join(args.output_folder, "requests-repair.jsonl")
+    else:
+        args.output_file = os.path.join(args.output_folder, "output.jsonl")
 
     if args.post_process:
         args.raw_output_file = args.output_file
-        if args.select_id == -1:
-            args.output_file = args.raw_output_file.replace(
-                ".jsonl", "_processed.jsonl"
+        if args.sample_folder:
+            assert (
+                args.select_id != -1
+            ), "Must specify --select_id if --sample_folder is used with --post_process"
+            args.output_file = os.path.join(
+                args.output_folder, f"repair_sample_{args.select_id}", "output.jsonl"
             )
+            os.makedirs(os.path.dirname(args.output_file), exist_ok=True)
         else:
-            args.output_file = args.raw_output_file.replace(
-                ".jsonl", f"_{args.select_id}_processed.jsonl"
-            )
+            if args.select_id == -1:
+                args.output_file = args.raw_output_file.replace(
+                    ".jsonl", "_processed.jsonl"
+                )
+            else:
+                args.output_file = args.raw_output_file.replace(
+                    ".jsonl", f"_{args.select_id}_processed.jsonl"
+                )
         post_process_repair(args)
     elif args.gen_and_process:
         repair(args)
         args.raw_output_file = args.output_file
         for i in range(args.max_samples):
-            args.output_file = args.raw_output_file.replace(
-                ".jsonl", f"_{i}_processed.jsonl"
-            )
+            if args.sample_folder:
+                args.output_file = os.path.join(
+                    args.output_folder, f"repair_sample_{i}", "output.jsonl"
+                )
+                os.makedirs(os.path.dirname(args.output_file), exist_ok=True)
+            else:
+                args.output_file = args.raw_output_file.replace(
+                    ".jsonl", f"_{i}_processed.jsonl"
+                )
             args.select_id = i
             post_process_repair(args)
     else:

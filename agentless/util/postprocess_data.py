@@ -472,7 +472,8 @@ def normalize_patch(
 
 def extract_python_blocks(text):
     # Regular expression pattern to match ```python\n{text}\n```
-    pattern = r"```python\n(.*?)\n```"
+    # relaxed to match any code block
+    pattern = r"```[^\n]*\n(.*?)\n```"
 
     # Use re.findall to find all matches
     matches = re.findall(pattern, text, re.DOTALL)
@@ -745,12 +746,7 @@ def parse_diff_edit_commands(
         return original, replace
 
     if len(file_loc_intervals) == 0:
-        if original in content:
-            content = content.replace(original, replace)
-            replaced = True
-        else:
-            print("not replaced")
-        return content
+        file_loc_intervals = [(1, len(content.splitlines()) + 1)]
     # let's first make sure the intervals are sorted
     file_loc_intervals.sort()
     replaced = False
