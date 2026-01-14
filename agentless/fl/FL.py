@@ -238,6 +238,11 @@ Return just the locations wrapped with ```.
         self.model_name = model_name
         self.backend = backend
         self.logger = logger
+        self.max_tokens = kwargs.get("max_tokens", 300)
+        self.temperature = kwargs.get("temperature", 0.0)
+        self.top_p = kwargs.get("top_p", 1.0)
+        self.thinking_budget = kwargs.get("thinking_budget", 0)
+        self.enable_thinking = kwargs.get("enable_thinking", False)
 
     def _parse_model_return_lines(self, content: str) -> list[str]:
         if content:
@@ -310,7 +315,9 @@ Return just the locations wrapped with ```.
             traj,
         )
 
-    def localize(self, top_n=1, mock=False) -> tuple[list, list, list, any]:
+    def localize(
+        self, top_n=1, mock=False, batch_gen=False, batch_response=None
+    ) -> tuple[list, list, list, any]:
         from agentless.util.api_requests import num_tokens_from_messages
         from agentless.util.model import make_model
 
@@ -332,17 +339,43 @@ Return just the locations wrapped with ```.
             }
             return [], {"raw_output_loc": ""}, traj
 
-        model = make_model(
-            model=self.model_name,
-            backend=self.backend,
-            logger=self.logger,
-            max_tokens=self.max_tokens,
-            temperature=0,
-            batch_size=1,
-        )
-        traj = model.codegen(message, num_samples=1)[0]
+        if batch_gen:
+            return {
+                "model": self.model_name,
+                "messages": [{"role": "user", "content": message}],
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                **({"thinking_budget": self.thinking_budget} if self.thinking_budget else {}),
+                **({"enable_thinking": True} if self.enable_thinking else {}),
+            }
+
+        if batch_response:
+            raw_output = batch_response
+            traj = {
+                "prompt": message,
+                "response": raw_output,
+                "usage": {
+                    "prompt_tokens": num_tokens_from_messages(message, self.model_name),
+                    "completion_tokens": 0,
+                },
+            }
+        else:
+            model = make_model(
+                model=self.model_name,
+                backend=self.backend,
+                logger=self.logger,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                batch_size=1,
+                top_p=self.top_p,
+                thinking_budget=self.thinking_budget,
+                enable_thinking=self.enable_thinking,
+            )
+            traj = model.codegen(message, num_samples=1)[0]
+            raw_output = traj["response"]
+
         traj["prompt"] = message
-        raw_output = traj["response"]
         model_found_files = self._parse_model_return_lines(raw_output)
 
         files, classes, functions = get_full_file_paths_and_classes_and_functions(

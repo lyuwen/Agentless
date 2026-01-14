@@ -98,7 +98,7 @@ def localize_irrelevant_instance(
 
 
 def localize_instance(
-    bug, args, swe_bench_data, start_file_locs, existing_instance_ids, write_lock=None
+    bug, args, swe_bench_data, start_file_locs, existing_instance_ids, write_lock=None, batch_data=None
 ):
     instance_id = bug["instance_id"]
     log_file = os.path.join(
@@ -144,10 +144,40 @@ def localize_instance(
             args.model,
             args.backend,
             logger,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            thinking_budget=args.thinking_budget,
+            enable_thinking=args.enable_thinking,
         )
-        found_files, additional_artifact_loc_file, file_traj = fl.localize(
-            mock=args.mock
-        )
+        if args.batch_gen:
+            req_body = fl.localize(batch_gen=True)
+            req = {
+                "custom_id": instance_id,
+                "method": "POST",
+                "url": "/v1/chat/completions",
+                "body": req_body,
+            }
+            if write_lock is not None:
+                write_lock.acquire()
+            with open(args.output_file, "a") as f:
+                f.write(json.dumps(req) + "\n")
+            if write_lock is not None:
+                write_lock.release()
+            return
+
+        if args.process_batch:
+            if instance_id in batch_data:
+                found_files, additional_artifact_loc_file, file_traj = fl.localize(
+                    batch_response=batch_data[instance_id]
+                )
+            else:
+                logger.warning(f"No batch data found for {instance_id}")
+                return
+        else:
+            found_files, additional_artifact_loc_file, file_traj = fl.localize(
+                mock=args.mock
+            )
     else:
         # assume start_file is provided
         for locs in start_file_locs:
@@ -430,16 +460,35 @@ def localize_irrelevant(args):
 
 
 def localize(args):
-    swe_bench_data = load_dataset(args.dataset, split="test")
+    if args.dataset.endswith(".jsonl") or args.dataset.endswith(".json"):
+        with open(args.dataset, "r") as f:
+            swe_bench_data = [json.loads(line) for line in f]
+    else:
+        swe_bench_data = load_dataset(args.dataset, split="test")
     start_file_locs = load_jsonl(args.start_file) if args.start_file else None
     existing_instance_ids = (
         load_existing_instance_ids(args.output_file) if args.skip_existing else set()
     )
 
+    batch_data = {}
+    if args.process_batch:
+        assert args.batch_output, "Must provide --batch_output if --process_batch is set"
+        with open(args.batch_output, "r") as f:
+            for line in f:
+                res = json.loads(line)
+                custom_id = res["custom_id"]
+                # format: instance_id
+                instance_id = custom_id
+                try:
+                     content = res["response"]["body"]["choices"][0]["message"]["content"]
+                     batch_data[instance_id] = content
+                except (KeyError, IndexError):
+                     print(f"Warning: could not parse response for {custom_id}")
+
     if args.num_threads == 1:
         for bug in tqdm(swe_bench_data, colour="MAGENTA"):
             localize_instance(
-                bug, args, swe_bench_data, start_file_locs, existing_instance_ids
+                bug, args, swe_bench_data, start_file_locs, existing_instance_ids, batch_data=batch_data
             )
     else:
         write_lock = Lock()
@@ -455,6 +504,7 @@ def localize(args):
                     start_file_locs,
                     existing_instance_ids,
                     write_lock,
+                    batch_data,
                 )
                 for bug in swe_bench_data
             ]
@@ -572,12 +622,12 @@ def main():
         "--model",
         type=str,
         default="gpt-4o-2024-05-13",
-        choices=[
-            "gpt-4o-2024-05-13",
-            "deepseek-coder",
-            "gpt-4o-mini-2024-07-18",
-            "claude-3-5-sonnet-20241022",
-        ],
+        # choices=[
+        #     "gpt-4o-2024-05-13",
+        #     "deepseek-coder",
+        #     "gpt-4o-mini-2024-07-18",
+        #     "claude-3-5-sonnet-20241022",
+        # ],
     )
     parser.add_argument(
         "--backend",
@@ -585,16 +635,26 @@ def main():
         default="openai",
         choices=["openai", "deepseek", "anthropic"],
     )
+    parser.add_argument("--batch_gen", action="store_true")
+    parser.add_argument("--process_batch", action="store_true")
+    parser.add_argument("--batch_output", type=str)
+    
+    parser.add_argument("--max_tokens", type=int, default=300)
+    parser.add_argument("--top_p", type=float, default=1.0)
+    parser.add_argument("--thinking_budget", type=int, default=0)
+    parser.add_argument("--enable_thinking", action="store_true")
+
     parser.add_argument(
         "--dataset",
-        type=str,
         default="princeton-nlp/SWE-bench_Lite",
-        choices=["princeton-nlp/SWE-bench_Lite", "princeton-nlp/SWE-bench_Verified"],
         help="Current supported dataset for evaluation",
     )
 
     args = parser.parse_args()
-    args.output_file = os.path.join(args.output_folder, args.output_file)
+    if args.batch_gen:
+        args.output_file = os.path.join(args.output_folder, "requests-localize.jsonl")
+    else:
+        args.output_file = os.path.join(args.output_folder, args.output_file)
     check_valid_args(args)
 
     os.makedirs(os.path.join(args.output_folder, "localization_logs"), exist_ok=True)

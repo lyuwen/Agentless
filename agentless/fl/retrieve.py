@@ -68,6 +68,8 @@ def retrieve_locs(bug, args, swe_bench_data, found_files, prev_o, write_lock=Non
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
         logger=logger,
+        embedding_model=args.embedding_model,
+        embedding_model_path=args.embedding_model_path,
         **kwargs,
     )
 
@@ -148,6 +150,10 @@ def main():
     parser.add_argument("--persist_dir", type=str)
     parser.add_argument("--target_id", type=str)
     parser.add_argument("--mock", action="store_true")
+    parser.add_argument(
+        "--embedding_model", type=str, default="text-embedding-3-small"
+    )
+    parser.add_argument("--embedding_model_path", type=str, default="")
     parser.add_argument(
         "--num_threads",
         type=int,
