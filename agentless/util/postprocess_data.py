@@ -475,8 +475,12 @@ def extract_python_blocks(text):
     # relaxed to match any code block
     pattern = r"```[^\n]*\n(.*?)\n```"
 
-    # Use re.findall to find all matches
     matches = re.findall(pattern, text, re.DOTALL)
+    # if test:
+    #     # Use re.findall to find all matches
+    #     matches = re.findall(pattern, text, re.DOTALL)
+    # else:
+    #     matches = []
 
     return matches
 

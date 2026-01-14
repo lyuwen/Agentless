@@ -52,6 +52,8 @@ def oracle_localize(args):
         logger.info(f"Processing bug {instance_id}")
 
         oracle_files = sorted(list(get_oracle_filenames(bug)))
+        if args.skip_non_python:
+            oracle_files = [f for f in oracle_files if f.endswith(".py")]
 
         result = {
             "instance_id": instance_id,
@@ -81,6 +83,9 @@ def main():
         help="Current supported dataset for evaluation or path to a local json/jsonl file",
     )
     parser.add_argument("--target_id", type=str, help="Target instance ID")
+    parser.add_argument(
+        "--skip_non_python", action="store_true", help="Skip non-python files"
+    )
 
     args = parser.parse_args()
 

@@ -156,7 +156,7 @@ def _post_process_multifile_repair(
     diff_format=False,
     str_replace_format=False,
 ) -> tuple[list[str], list[str]]:
-    if not str_replace_format:
+    if not str_replace_format and raw_output is not None:
         edit_multifile_commands = extract_python_blocks(raw_output)
     else:
         edit_multifile_commands = raw_output
