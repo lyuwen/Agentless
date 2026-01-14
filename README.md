@@ -8,8 +8,9 @@
 <p align="center">
     <big><a href="#-news">😽News</a></big> |
     <big><a href="#-setup">🐈Setup</a></big> |
+    <big><a href="#-usage">📖Usage</a></big> |
     <big><a href="#-comparison">🧶Comparison</a></big> | 
-    <big><a href="#-artifacts">🐈‍⬛Artifacts</a></big> |
+    <big><a href="#-artifacts">�‍⬛Artifacts</a></big> |
     <big><a href="#-citation">📝Citation</a></big> |
     <big><a href="#-acknowledgement">😻Acknowledgement</a></big>
 </p>
@@ -62,6 +63,12 @@ Now you are ready to run **Agentless** on the problems in SWE-bench!
 > [!NOTE]
 > 
 > To reproduce the full SWE-bench lite experiments and follow our exact setup as described in the paper. Please see this [README](https://github.com/OpenAutoCoder/Agentless/blob/main/README_swebench.md)
+
+
+## 📖 Usage
+
+> [!TIP]
+> **Batch Processing**: For detailed instructions on using the new batch generation and processing features (e.g. with SGLang), please refer to **[USAGE.md](USAGE.md)**.
 
 ## 🧶 Comparison
 
