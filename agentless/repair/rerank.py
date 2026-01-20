@@ -3,6 +3,8 @@ import json
 import os
 from collections import Counter
 from pathlib import Path
+from tqdm import tqdm
+import concurrent.futures
 
 from agentless.util.postprocess_data import normalize_patch
 from agentless.util.utils import load_json, load_jsonl
@@ -289,6 +291,52 @@ def majority_voting(args):
             f.write(json.dumps(result) + "\n")
 
 
+
+def process_single_file_normalization(args):
+    output_folder, i = args
+    if os.path.exists(output_folder / f"output_{i}_normalized.jsonl"):
+        # skip
+        return
+    
+    input_file = output_folder / f"output_{i}_processed.jsonl"
+    if not os.path.exists(input_file):
+        return
+
+    patches = load_jsonl(input_file)
+    for d in patches:
+        instance_id = d["instance_id"]
+        patch = d["model_patch"]
+        original_file_content = d["original_file_content"]
+        new_file_content = d["new_file_content"]
+        edited_files = d["edited_files"]
+        normalized_patch = normalize_patch(
+            instance_id,
+            patch,
+            original_file_content,
+            new_file_content,
+            edited_files,
+        )
+        d["normalized_patch"] = normalized_patch
+    with open(output_folder / f"output_{i}_normalized.jsonl", "w") as f:
+        for d in patches:
+            f.write(json.dumps(d) + "\n")
+
+
+def normalize_patches_parallel(args):
+    # separate the patch folders
+    output_folders = [Path(folder) for folder in args.patch_folder.split(",")]
+    num_folders = len(output_folders)
+    selected_ids = list(range(int(args.num_samples / num_folders)))
+
+    tasks = []
+    for output_folder in output_folders:
+        for i in selected_ids:
+            tasks.append((output_folder, i))
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=min(len(tasks), 40)) as executor:
+        list(tqdm(executor.map(process_single_file_normalization, tasks), total=len(tasks), desc="Normalizing patches"))
+
+
 def normalize_patches(args):
     # separate the patch folders
     output_folders = [Path(folder) for folder in args.patch_folder.split(",")]
@@ -296,13 +344,14 @@ def normalize_patches(args):
     selected_ids = list(range(int(args.num_samples / num_folders)))
 
     for output_folder in output_folders:
-        for i in selected_ids:
+        for i in tqdm(selected_ids, desc="Loop over samples"):
             if os.path.exists(output_folder / f"output_{i}_normalized.jsonl"):
                 # skip
                 continue
             patches = load_jsonl(output_folder / f"output_{i}_processed.jsonl")
-            for d in patches:
+            for d in tqdm(patches, desc="Loop over patches"):
                 instance_id = d["instance_id"]
+                print(instance_id, flush=True)
                 patch = d["model_patch"]
                 original_file_content = d["original_file_content"]
                 new_file_content = d["new_file_content"]
@@ -332,7 +381,8 @@ def main():
     args = parser.parse_args()
 
     # first normalize
-    normalize_patches(args)
+    normalize_patches_parallel(args)
+    # normalize_patches(args)
     # then load results
     _load_results(args)
     # then rerank
