@@ -87,7 +87,8 @@ def create_instance_test_dict(jsonl_file_path):
         for line in file:
             json_obj = json.loads(line.strip())
             instance_id = json_obj["instance_id"]
-            test_patch = json_obj["test_patch"]
+            test_patch = json_obj.get("test_patch") or json_obj.get("model_patch")
+            assert test_patch is not None
             instance_test_dict[instance_id] = test_patch
 
     return instance_test_dict

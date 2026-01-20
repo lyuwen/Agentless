@@ -344,8 +344,11 @@ def get_functions(tree):
 
 
 def is_just_new_function(code1, code2):
-    tree1 = ast.parse(code1)
-    tree2 = ast.parse(code2)
+    try:
+        tree1 = ast.parse(code1)
+        tree2 = ast.parse(code2)
+    except SyntaxError:
+        return False
 
     functions1 = get_functions(tree1)
     functions2 = get_functions(tree2)
